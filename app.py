@@ -129,47 +129,33 @@ if template_file and letter_text and salutation:
             # Enhanced replace function that handles addressee removal
             def replace_text_in_doc(doc, replacements, remove_addressee_if_empty=False):
                 paragraphs_to_remove = []
-                
+            
                 # Replace in paragraphs
                 for i, paragraph in enumerate(doc.paragraphs):
-                    paragraph_text = paragraph.text.strip()
-                    
-                    # Handle addressee removal logic
-                    if remove_addressee_if_empty and not addressee:
-                        # If this paragraph contains <<Addressee>> placeholder, mark for removal
-                        if "<<Addressee>>" in paragraph_text:
-                            paragraphs_to_remove.append(i)
-                            continue
-                        # Also remove the blank line after addressee (if it exists)
-                        elif i > 0 and "<<Addressee>>" in doc.paragraphs[i-1].text and paragraph_text == "":
-                            paragraphs_to_remove.append(i)
-                            continue
-                    
-                    # Normal text replacement
+                    full_text = ''.join(run.text for run in paragraph.runs)
                     for key, value in replacements.items():
-                        if key in paragraph.text:
-                            # Handle paragraph-level replacement
-                            for run in paragraph.runs:
-                                if key in run.text:
-                                    run.text = run.text.replace(key, value)
-                
-                # Remove paragraphs marked for removal (in reverse order to maintain indices)
-                for idx in sorted(paragraphs_to_remove, reverse=True):
-                    # Remove paragraph by clearing its content
-                    p = doc.paragraphs[idx]
-                    p.clear()
-                
+                        if key in full_text:
+                            full_text = full_text.replace(key, value)
+                    # Clear existing runs and add new run with replaced text
+                    if full_text != ''.join(run.text for run in paragraph.runs):
+                        for run in paragraph.runs:
+                            run.text = ''
+                        paragraph.runs[0].text = full_text
+            
                 # Replace in tables
                 for table in doc.tables:
                     for row in table.rows:
                         for cell in row.cells:
                             for paragraph in cell.paragraphs:
+                                full_text = ''.join(run.text for run in paragraph.runs)
                                 for key, value in replacements.items():
-                                    if key in paragraph.text:
-                                        for run in paragraph.runs:
-                                            if key in run.text:
-                                                run.text = run.text.replace(key, value)
-                
+                                    if key in full_text:
+                                        full_text = full_text.replace(key, value)
+                                if full_text != ''.join(run.text for run in paragraph.runs):
+                                    for run in paragraph.runs:
+                                        run.text = ''
+                                    paragraph.runs[0].text = full_text
+            
                 return doc
             
             replacements = {

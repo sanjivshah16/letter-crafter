@@ -4,6 +4,7 @@ from urllib.parse import unquote
 from datetime import date
 import io
 import requests
+import json
 
 # Configure page to avoid resets
 st.set_page_config(page_title="Letter Formatter", layout="wide")
@@ -28,34 +29,26 @@ if "paste_id" in params:
         response = requests.get(pastebin_url)
         if response.status_code == 200:
             # Parse the JSON data from pastebin
-            import json
             data = json.loads(response.text)
             letter_text = data.get("text", "")
             addressee = data.get("addressee", "")
             salutation = data.get("salutation", "")
             letter_date = data.get("date", letter_date)
+            st.success("✅ Letter data loaded successfully from pastebin!")
         else:
-            st.error("Could not retrieve letter content from pastebin. Please try manual input below.")
+            st.error("Could not retrieve letter content from pastebin.")
     except Exception as e:
-        st.error(f"Error retrieving letter: {str(e)}. Please use manual input below.")
-        
-    # Also get individual parameters if provided
-    if "addressee" in params:
-        addressee = unquote(params["addressee"])
-    if "salutation" in params:
-        salutation = unquote(params["salutation"])
-    if "date" in params:
-        letter_date = unquote(params["date"])
-else:
-    # Fall back to original URL parameter method for shorter content
-    if "text" in params:
-        letter_text = unquote(params["text"])
-    if "addressee" in params:
-        addressee = unquote(params["addressee"])
-    if "salutation" in params:
-        salutation = unquote(params["salutation"])
-    if "date" in params:
-        letter_date = unquote(params["date"])
+        st.error(f"Error retrieving letter: {str(e)}")
+
+# Also get individual parameters if provided (these override pastebin data)
+if "addressee" in params:
+    addressee = unquote(params["addressee"])
+if "salutation" in params:
+    salutation = unquote(params["salutation"])
+if "date" in params:
+    letter_date = unquote(params["date"])
+if "text" in params:
+    letter_text = unquote(params["text"])
 
 # Create two columns for layout
 col1, col2 = st.columns([2, 1])
@@ -92,19 +85,6 @@ with col2:
     st.markdown("📥 **[Download Example Template](https://tinyurl.com/yc5au6un)**")
     st.caption("Use this template as a starting point for your letters")
 
-# Add manual input option
-st.markdown("---")
-st.subheader("🔄 Manual Input Option")
-st.write("If the letter data didn't load automatically, you can input it manually:")
-
-manual_mode = st.checkbox("Use manual input mode")
-
-if manual_mode:
-    letter_text = st.text_area("Letter Text", value=letter_text, height=300)
-    addressee = st.text_input("Addressee (optional)", value=addressee)
-    salutation = st.text_input("Salutation", value=salutation or "Dear admissions committee members,")
-    letter_date = st.text_input("Date", value=letter_date)
-
 # Let user optionally rename file
 filename = st.text_input("Enter filename (without extension)", value="recommendation_letter")
 
@@ -119,57 +99,79 @@ template_file = st.file_uploader(
 if template_file and letter_text and salutation:
     try:
         # Store processed document in session state to prevent reprocessing
-        cache_key = f"{template_file.name}_{len(letter_text)}_{addressee}_{salutation}"
+        cache_key = f"{template_file.name}_{hash(letter_text)}_{hash(addressee)}_{hash(salutation)}"
         
         if 'processed_doc' not in st.session_state or st.session_state.get('cache_key') != cache_key:
+            
+            # Read the uploaded template
             template = Document(template_file)
             
-            # Enhanced replace function that handles addressee removal
-            def replace_text_in_doc(doc, replacements, remove_addressee_if_empty=False):
+            # Debug: Show what placeholders we found
+            placeholders_found = []
+            for paragraph in template.paragraphs:
+                if "<<" in paragraph.text and ">>" in paragraph.text:
+                    placeholders_found.append(paragraph.text.strip())
+            
+            if placeholders_found:
+                st.write("**Placeholders found in template:**")
+                for placeholder in placeholders_found:
+                    st.write(f"- {placeholder}")
+            else:
+                st.warning("⚠️ No placeholders found in template! Make sure your template contains <<Date>>, <<Addressee>>, <<Salutation>>, and <<Enter text here>>")
+            
+            # More robust replace function
+            def replace_text_in_document(doc, replacements):
+                # Keep track of replacements made
+                replacements_made = {}
+                
+                # Process paragraphs
                 paragraphs_to_remove = []
                 
-                # Replace in paragraphs
                 for i, paragraph in enumerate(doc.paragraphs):
-                    paragraph_text = paragraph.text.strip()
+                    original_text = paragraph.text
                     
-                    # Handle addressee removal logic
-                    if remove_addressee_if_empty and not addressee:
-                        # If this paragraph contains <<Addressee>> placeholder, mark for removal
-                        if "<<Addressee>>" in paragraph_text:
-                            paragraphs_to_remove.append(i)
-                            continue
-                        # Also remove the blank line after addressee (if it exists)
-                        elif i > 0 and "<<Addressee>>" in doc.paragraphs[i-1].text and paragraph_text == "":
-                            paragraphs_to_remove.append(i)
-                            continue
+                    # Check if this paragraph should be removed (empty addressee case)
+                    if not addressee and "<<Addressee>>" in original_text:
+                        paragraphs_to_remove.append(i)
+                        continue
                     
-                    # Normal text replacement
-                    for key, value in replacements.items():
-                        if key in paragraph.text:
-                            # Handle paragraph-level replacement
-                            for run in paragraph.runs:
-                                if key in run.text:
-                                    run.text = run.text.replace(key, value)
+                    # Check if this is a blank line after addressee that should be removed
+                    if (not addressee and i > 0 and 
+                        "<<Addressee>>" in doc.paragraphs[i-1].text and 
+                        original_text.strip() == ""):
+                        paragraphs_to_remove.append(i)
+                        continue
+                    
+                    # Replace text in this paragraph
+                    for placeholder, replacement in replacements.items():
+                        if placeholder in original_text:
+                            # Clear the paragraph and add the new text
+                            paragraph.clear()
+                            paragraph.add_run(original_text.replace(placeholder, replacement))
+                            replacements_made[placeholder] = True
+                            break  # Only do one replacement per paragraph
                 
-                # Remove paragraphs marked for removal (in reverse order to maintain indices)
+                # Remove paragraphs marked for removal (in reverse order)
                 for idx in sorted(paragraphs_to_remove, reverse=True):
-                    # Remove paragraph by clearing its content
                     p = doc.paragraphs[idx]
-                    p.clear()
+                    p_element = p._element
+                    p_element.getparent().remove(p_element)
                 
-                # Replace in tables
+                # Process tables
                 for table in doc.tables:
                     for row in table.rows:
                         for cell in row.cells:
                             for paragraph in cell.paragraphs:
-                                for key, value in replacements.items():
-                                    if key in paragraph.text:
-                                        for run in paragraph.runs:
-                                            if key in run.text:
-                                                run.text = run.text.replace(key, value)
+                                original_text = paragraph.text
+                                for placeholder, replacement in replacements.items():
+                                    if placeholder in original_text:
+                                        paragraph.clear()
+                                        paragraph.add_run(original_text.replace(placeholder, replacement))
+                                        replacements_made[placeholder] = True
                 
-                return doc
+                return doc, replacements_made
             
+            # Define replacements
             replacements = {
                 "<<Date>>": letter_date,
                 "<<Addressee>>": addressee if addressee else "",
@@ -177,70 +179,63 @@ if template_file and letter_text and salutation:
                 "<<Enter text here>>": letter_text
             }
             
-            updated_doc = replace_text_in_doc(
-                template, 
-                replacements, 
-                remove_addressee_if_empty=True
-            )
+            # Apply replacements
+            updated_doc, replacements_made = replace_text_in_document(template, replacements)
+            
+            # Show what replacements were made
+            st.write("**Replacements made:**")
+            for placeholder, replacement in replacements.items():
+                if placeholder in replacements_made:
+                    st.write(f"✅ {placeholder} → {replacement[:50]}{'...' if len(replacement) > 50 else ''}")
+                else:
+                    st.write(f"❌ {placeholder} (not found in template)")
             
             # Store in session state
             st.session_state.processed_doc = updated_doc
             st.session_state.cache_key = cache_key
         
-        st.success("Document processed successfully!")
+        st.success("🎉 Document processed successfully!")
         
-        # Create download buttons in columns
-        download_col1, download_col2 = st.columns(2)
+        # DOCX Download
+        docx_buffer = io.BytesIO()
+        st.session_state.processed_doc.save(docx_buffer)
+        docx_buffer.seek(0)
         
-        with download_col1:
-            # DOCX Download
-            docx_buffer = io.BytesIO()
-            st.session_state.processed_doc.save(docx_buffer)
-            docx_buffer.seek(0)
-            
-            st.download_button(
-                label="📥 Download as DOCX",
-                data=docx_buffer.getvalue(),
-                file_name=f"{filename}.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                key="docx_download"
-            )
-        
-        with download_col2:
-            # PDF Download instruction
-            st.info("📄 **PDF Download**")
-            st.write("After downloading the DOCX file:")
-            st.write("1. Open it in Microsoft Word")
-            st.write("2. Go to File → Save As")
-            st.write("3. Choose PDF format")
-            st.write("")
-            st.write("Or use an online converter like:")
-            st.markdown("• [SmallPDF](https://smallpdf.com/word-to-pdf)")
-            st.markdown("• [ILovePDF](https://www.ilovepdf.com/word_to_pdf)")
+        st.download_button(
+            label="📥 Download Formatted Letter (DOCX)",
+            data=docx_buffer.getvalue(),
+            file_name=f"{filename}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            key="docx_download"
+        )
         
     except Exception as e:
-        st.error(f"Error processing document: {str(e)}")
-        st.write("Debug info:")
+        st.error(f"❌ Error processing document: {str(e)}")
+        st.write("**Debug info:**")
         st.write(f"Template file name: {template_file.name}")
         st.write(f"Letter text length: {len(letter_text)}")
         
+        # Show the first few characters of letter text for debugging
+        if letter_text:
+            st.write(f"Letter text preview: {letter_text[:100]}...")
+        
 elif not template_file:
-    st.info("Please upload a Word template to begin.")
+    st.info("📤 Please upload a Word template to begin.")
 elif not letter_text:
-    st.info("No letter text found. Please use manual input above or check your source link.")
+    st.info("📝 No letter text found. Please check your source link.")
 elif not salutation:
-    st.info("No salutation found. Please use manual input above.")
+    st.info("👋 No salutation found. Please check your source link.")
 else:
-    st.info("Awaiting letter text and a valid template to begin.")
+    st.info("⏳ Awaiting letter text and a valid template to begin.")
 
 # Add footer with instructions
 st.markdown("---")
 st.markdown("""
-**How to use this app:**
+**📋 How to use this app:**
 1. Download the example template above and customize it with your letterhead
-2. Make sure your template includes the required placeholders (see format above)
+2. Make sure your template includes the required placeholders: `<<Date>>`, `<<Addressee>>`, `<<Salutation>>`, `<<Enter text here>>`
 3. Upload your customized template
-4. The app will automatically fill in the content from the URL parameters
+4. The app will automatically fill in the content from the URL parameters or pastebin
 5. If no addressee is provided, those lines will be automatically removed
-6. Download your formatted letter as DOCX, then convert to PDF if needed
+6. Download your formatted letter as a DOCX file
 """)

@@ -5,31 +5,29 @@ from datetime import date
 import io
 from docx.shared import Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-import requests
 
 # Configure page to avoid resets
 st.set_page_config(page_title="Letter Formatter", layout="wide")
 
 st.title("📄 Format Your Recommendation Letter")
 
-# Create the example template
+# Create the example template that matches your actual format
 def create_example_template():
     doc = Document()
     
-    # Add header with letterhead info
+    # Add header with letterhead info (simplified version of your template)
     header_p = doc.add_paragraph()
     header_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     run = header_p.add_run("Your Name, Title, Credentials")
     run.bold = True
     
     doc.add_paragraph("Your Department/Division")
-    doc.add_paragraph("Your Institution")
-    doc.add_paragraph("Your Address")
+    doc.add_paragraph("Your Institution Address")
     doc.add_paragraph("City, State ZIP")
-    doc.add_paragraph("Phone: Your Phone | Email: your.email@institution.edu")
+    doc.add_paragraph("Phone: XXX-XXX-XXXX | Email: your.email@institution.edu")
     doc.add_paragraph()
     
-    # Add placeholders
+    # Add placeholders - matching your template format
     doc.add_paragraph("<<Date>>")
     doc.add_paragraph()
     doc.add_paragraph("<<Addressee>>")
@@ -88,9 +86,11 @@ with col2:
     - Be a .docx file (Word document)
     - Include these exact placeholders:
       - `<<Date>>` for the date  
-      - `<<Addressee>>` for recipient info
+      - `<<Addressee>>` for recipient info (optional)
       - `<<Salutation>>` for greeting
       - `<<Enter text here>>` for main content
+      
+    **Note:** If no addressee is provided, the addressee lines will be automatically removed.
     """)
     
     # Provide example template for download
@@ -121,20 +121,43 @@ template_file = st.file_uploader(
 if template_file and letter_text and salutation:
     try:
         # Store processed document in session state to prevent reprocessing
-        if 'processed_doc' not in st.session_state or st.session_state.get('last_template') != template_file.name:
+        cache_key = f"{template_file.name}_{len(letter_text)}_{addressee}_{salutation}"
+        
+        if 'processed_doc' not in st.session_state or st.session_state.get('cache_key') != cache_key:
             template = Document(template_file)
             
-            # Improved replace function
-            def replace_text_in_doc(doc, replacements):
+            # Enhanced replace function that handles addressee removal
+            def replace_text_in_doc(doc, replacements, remove_addressee_if_empty=False):
+                paragraphs_to_remove = []
+                
                 # Replace in paragraphs
-                for paragraph in doc.paragraphs:
+                for i, paragraph in enumerate(doc.paragraphs):
+                    paragraph_text = paragraph.text.strip()
+                    
+                    # Handle addressee removal logic
+                    if remove_addressee_if_empty and not addressee:
+                        # If this paragraph contains <<Addressee>> placeholder, mark for removal
+                        if "<<Addressee>>" in paragraph_text:
+                            paragraphs_to_remove.append(i)
+                            continue
+                        # Also remove the blank line after addressee (if it exists)
+                        elif i > 0 and "<<Addressee>>" in doc.paragraphs[i-1].text and paragraph_text == "":
+                            paragraphs_to_remove.append(i)
+                            continue
+                    
+                    # Normal text replacement
                     for key, value in replacements.items():
                         if key in paragraph.text:
                             # Handle paragraph-level replacement
-                            inline = paragraph.runs
-                            for run in inline:
+                            for run in paragraph.runs:
                                 if key in run.text:
                                     run.text = run.text.replace(key, value)
+                
+                # Remove paragraphs marked for removal (in reverse order to maintain indices)
+                for idx in sorted(paragraphs_to_remove, reverse=True):
+                    # Remove paragraph by clearing its content
+                    p = doc.paragraphs[idx]
+                    p.clear()
                 
                 # Replace in tables
                 for table in doc.tables:
@@ -156,11 +179,15 @@ if template_file and letter_text and salutation:
                 "<<Enter text here>>": letter_text
             }
             
-            updated_doc = replace_text_in_doc(template, replacements)
+            updated_doc = replace_text_in_doc(
+                template, 
+                replacements, 
+                remove_addressee_if_empty=True
+            )
             
             # Store in session state
             st.session_state.processed_doc = updated_doc
-            st.session_state.last_template = template_file.name
+            st.session_state.cache_key = cache_key
         
         st.success("Document processed successfully!")
         
@@ -195,6 +222,9 @@ if template_file and letter_text and salutation:
         
     except Exception as e:
         st.error(f"Error processing document: {str(e)}")
+        st.write("Debug info:")
+        st.write(f"Template file name: {template_file.name}")
+        st.write(f"Letter text length: {len(letter_text)}")
         
 elif not template_file:
     st.info("Please upload a Word template to begin.")
@@ -210,8 +240,9 @@ st.markdown("---")
 st.markdown("""
 **How to use this app:**
 1. Download the example template above and customize it with your letterhead
-2. Make sure your template includes the required placeholders
+2. Make sure your template includes the required placeholders (see format above)
 3. Upload your customized template
 4. The app will automatically fill in the content from the URL parameters
-5. Download your formatted letter as DOCX, then convert to PDF if needed
+5. If no addressee is provided, those lines will be automatically removed
+6. Download your formatted letter as DOCX, then convert to PDF if needed
 """)

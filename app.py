@@ -74,7 +74,7 @@ with col2:
       - `<<Salutation>>`  
       - `<<Enter text here>>`
     """)
-    st.markdown("📥 **[Download Example Template](https://tinyurl.com/yc5au6un)**")
+    st.markdown("📥 **[Download Example Template](https://tinyurl.com/yc4badk7)**")
     st.caption("Use this template as a starting point.")
 
 # Filename input

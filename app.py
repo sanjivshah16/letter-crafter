@@ -4,7 +4,6 @@ from urllib.parse import unquote
 from datetime import date
 import io
 import requests
-import json
 
 # Configure page to avoid resets
 st.set_page_config(page_title="Letter Formatter", layout="wide")
@@ -14,31 +13,41 @@ st.title("📄 Format Your Recommendation Letter")
 # Get query parameters
 params = st.query_params
 
-# Handle both URL parameters and letter ID from POST redirect
+# Handle both URL parameters and pastebin ID
 letter_text = ""
 addressee = ""
 salutation = ""
 letter_date = date.today().strftime("%B %d, %Y")
 
-# Check if we have a letter ID (from POST method)
-if "letter_id" in params:
-    letter_id = params["letter_id"]
+# Check if we have a pastebin ID
+if "paste_id" in params:
+    paste_id = params["paste_id"]
     try:
-        # Fetch the stored letter data
-        # You'll need to implement this endpoint on your API server
-        response = requests.get(f"https://your-api-domain.com/get-letter/{letter_id}")
+        # Fetch the letter from pastebin
+        pastebin_url = f"https://pastebin.com/raw/{paste_id}"
+        response = requests.get(pastebin_url)
         if response.status_code == 200:
-            data = response.json()
+            # Parse the JSON data from pastebin
+            import json
+            data = json.loads(response.text)
             letter_text = data.get("text", "")
             addressee = data.get("addressee", "")
             salutation = data.get("salutation", "")
             letter_date = data.get("date", letter_date)
         else:
-            st.error("Could not retrieve letter content. Please try the manual input below.")
+            st.error("Could not retrieve letter content from pastebin. Please try manual input below.")
     except Exception as e:
         st.error(f"Error retrieving letter: {str(e)}. Please use manual input below.")
+        
+    # Also get individual parameters if provided
+    if "addressee" in params:
+        addressee = unquote(params["addressee"])
+    if "salutation" in params:
+        salutation = unquote(params["salutation"])
+    if "date" in params:
+        letter_date = unquote(params["date"])
 else:
-    # Fall back to original URL parameter method
+    # Fall back to original URL parameter method for shorter content
     if "text" in params:
         letter_text = unquote(params["text"])
     if "addressee" in params:

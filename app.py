@@ -85,6 +85,13 @@ st.markdown("### ✏️ Choose Formatting")
 font_name = st.selectbox("Font", ["Arial", "Times New Roman", "Calibri", "Aptos"], index=0)
 font_size = st.selectbox("Font size", [9, 10, 10.5, 11, 11.5, 12], index=3)
 
+# Check if font settings have changed after document was processed
+font_changed = False
+if 'processed_doc' in st.session_state:
+    if ('last_font_name' in st.session_state and st.session_state.last_font_name != font_name) or \
+       ('last_font_size' in st.session_state and st.session_state.last_font_size != font_size):
+        font_changed = True
+
 # Template upload
 template_file = st.file_uploader(
     "Upload Your Word Template (.docx)", 
@@ -92,10 +99,20 @@ template_file = st.file_uploader(
     help="Upload a Word document with the required placeholders"
 )
 
+# Show regenerate button if font changed and document exists
+if font_changed and template_file:
+    if st.button("🔄 Regenerate Letter with Updated Font Formatting", type="primary"):
+        # Clear the cached document to force regeneration
+        if 'processed_doc' in st.session_state:
+            del st.session_state.processed_doc
+        if 'cache_key' in st.session_state:
+            del st.session_state.cache_key
+        st.rerun()
+
 # Main processing
 if template_file and letter_text and salutation:
     try:
-        cache_key = f"{template_file.name}_{hash(letter_text)}_{hash(addressee)}_{hash(salutation)}"
+        cache_key = f"{template_file.name}_{hash(letter_text)}_{hash(addressee)}_{hash(salutation)}_{font_name}_{font_size}"
         
         if 'processed_doc' not in st.session_state or st.session_state.get('cache_key') != cache_key:
             template = Document(template_file)
@@ -161,6 +178,9 @@ if template_file and letter_text and salutation:
 
             st.session_state.processed_doc = updated_doc
             st.session_state.cache_key = cache_key
+            # Store current font settings
+            st.session_state.last_font_name = font_name
+            st.session_state.last_font_size = font_size
 
         st.success("🎉 Document processed successfully!")
         docx_buffer = io.BytesIO()

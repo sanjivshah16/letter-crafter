@@ -142,32 +142,19 @@ if template_file and letter_text and salutation:
                         paragraphs_to_remove.append(i)
                         continue
                     
-                    # Replace text in this paragraph
-                    for placeholder, replacement in replacements.items():
-                        if placeholder in original_text:
-                            # Clear the paragraph and add the new text
-                            paragraph.clear()
-                            paragraph.add_run(original_text.replace(placeholder, replacement))
-                            replacements_made[placeholder] = True
-                            break  # Only do one replacement per paragraph
+                    # Replace text in this paragraph's runs to preserve formatting
+                    for run in paragraph.runs:
+                        for placeholder, replacement in replacements.items():
+                            if placeholder in run.text:
+                                run.text = run.text.replace(placeholder, replacement)
+                                replacements_made[placeholder] = True
+
                 
                 # Remove paragraphs marked for removal (in reverse order)
                 for idx in sorted(paragraphs_to_remove, reverse=True):
                     p = doc.paragraphs[idx]
                     p_element = p._element
                     p_element.getparent().remove(p_element)
-                
-                # Process tables
-                for table in doc.tables:
-                    for row in table.rows:
-                        for cell in row.cells:
-                            for paragraph in cell.paragraphs:
-                                original_text = paragraph.text
-                                for placeholder, replacement in replacements.items():
-                                    if placeholder in original_text:
-                                        paragraph.clear()
-                                        paragraph.add_run(original_text.replace(placeholder, replacement))
-                                        replacements_made[placeholder] = True
                 
                 return doc, replacements_made
             

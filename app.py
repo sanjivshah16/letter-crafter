@@ -132,6 +132,7 @@ if template_file and letter_text and salutation:
             def replace_text_in_document(doc, replacements):
                 replacements_made = {}
                 paragraphs_to_remove = []
+                letter_content_paragraph_index = None
 
                 for i, paragraph in enumerate(doc.paragraphs):
                     original_text = paragraph.text
@@ -151,7 +152,22 @@ if template_file and letter_text and salutation:
                             run.font.size = Pt(font_size)
                             run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
                             replacements_made[placeholder] = True
+                            
+                            # Track where the letter content was inserted
+                            if placeholder == "<<Enter text here>>":
+                                letter_content_paragraph_index = i
                             break
+
+                # Apply font formatting to all paragraphs after the letter content
+                if letter_content_paragraph_index is not None:
+                    for i in range(letter_content_paragraph_index + 1, len(doc.paragraphs)):
+                        paragraph = doc.paragraphs[i]
+                        # Only format paragraphs that have text content
+                        if paragraph.text.strip():
+                            for run in paragraph.runs:
+                                run.font.name = font_name
+                                run.font.size = Pt(font_size)
+                                run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
 
                 for idx in sorted(paragraphs_to_remove, reverse=True):
                     p = doc.paragraphs[idx]

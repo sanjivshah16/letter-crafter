@@ -3,8 +3,48 @@ from docx import Document
 from urllib.parse import unquote
 from datetime import date
 import io
+from docx.shared import Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+import requests
+
+# Configure page to avoid resets
+st.set_page_config(page_title="Letter Formatter", layout="wide")
 
 st.title("📄 Format Your Recommendation Letter")
+
+# Create the example template
+def create_example_template():
+    doc = Document()
+    
+    # Add header with letterhead info
+    header_p = doc.add_paragraph()
+    header_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    run = header_p.add_run("Your Name, Title, Credentials")
+    run.bold = True
+    
+    doc.add_paragraph("Your Department/Division")
+    doc.add_paragraph("Your Institution")
+    doc.add_paragraph("Your Address")
+    doc.add_paragraph("City, State ZIP")
+    doc.add_paragraph("Phone: Your Phone | Email: your.email@institution.edu")
+    doc.add_paragraph()
+    
+    # Add placeholders
+    doc.add_paragraph("<<Date>>")
+    doc.add_paragraph()
+    doc.add_paragraph("<<Addressee>>")
+    doc.add_paragraph()
+    doc.add_paragraph("<<Salutation>>,")
+    doc.add_paragraph()
+    doc.add_paragraph("<<Enter text here>>")
+    doc.add_paragraph()
+    doc.add_paragraph("Sincerely,")
+    doc.add_paragraph()
+    doc.add_paragraph()
+    doc.add_paragraph("Your Name")
+    doc.add_paragraph("Your Title")
+    
+    return doc
 
 # Get query parameters
 params = st.query_params
@@ -24,78 +64,134 @@ if "salutation" in params:
 if "date" in params:
     letter_date = unquote(params["date"])
 
-# Display the parsed content for debugging
-st.subheader("Parsed Content:")
-st.write(f"**Date:** {letter_date}")
-st.write(f"**Addressee:** {addressee if addressee else '(None provided)'}")
-st.write(f"**Salutation:** {salutation}")
-st.write(f"**Letter Text Length:** {len(letter_text)} characters")
+# Create two columns for layout
+col1, col2 = st.columns([2, 1])
 
-# Show a preview of the letter text
-if letter_text:
-    with st.expander("Preview Letter Text"):
-        st.write(letter_text)
+with col1:
+    # Display the parsed content for debugging
+    st.subheader("Parsed Content:")
+    st.write(f"**Date:** {letter_date}")
+    st.write(f"**Addressee:** {addressee if addressee else '(None provided)'}")
+    st.write(f"**Salutation:** {salutation}")
+    st.write(f"**Letter Text Length:** {len(letter_text)} characters")
+
+    # Show a preview of the letter text
+    if letter_text:
+        with st.expander("Preview Letter Text"):
+            st.write(letter_text)
+
+with col2:
+    # Template instructions and download
+    st.subheader("📋 Template Requirements")
+    st.info("""
+    **Important:** Your Word template must:
+    - Be a .docx file (Word document)
+    - Include these exact placeholders:
+      - `<<Date>>` for the date  
+      - `<<Addressee>>` for recipient info
+      - `<<Salutation>>` for greeting
+      - `<<Enter text here>>` for main content
+    """)
+    
+    # Provide example template for download
+    example_doc = create_example_template()
+    example_buffer = io.BytesIO()
+    example_doc.save(example_buffer)
+    example_buffer.seek(0)
+    
+    st.download_button(
+        label="📥 Download Example Template",
+        data=example_buffer.getvalue(),
+        file_name="letter_template_example.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        help="Download this template as a starting point"
+    )
 
 # Let user optionally rename file
 filename = st.text_input("Enter filename (without extension)", value="recommendation_letter")
 
 # Upload template
-template_file = st.file_uploader("Upload Word Template (.docx)", type=["docx"])
+template_file = st.file_uploader(
+    "Upload Your Word Template (.docx)", 
+    type=["docx"],
+    help="Upload a Word document with the required placeholders"
+)
 
-# Updated condition - don't require addressee since it can be empty
+# Process document if all requirements are met
 if template_file and letter_text and salutation:
     try:
-        template = Document(template_file)
-        
-        # Improved replace function
-        def replace_text_in_doc(doc, replacements):
-            # Replace in paragraphs
-            for paragraph in doc.paragraphs:
-                for key, value in replacements.items():
-                    if key in paragraph.text:
-                        # Handle paragraph-level replacement
-                        inline = paragraph.runs
-                        for run in inline:
-                            if key in run.text:
-                                run.text = run.text.replace(key, value)
+        # Store processed document in session state to prevent reprocessing
+        if 'processed_doc' not in st.session_state or st.session_state.get('last_template') != template_file.name:
+            template = Document(template_file)
             
-            # Replace in tables
-            for table in doc.tables:
-                for row in table.rows:
-                    for cell in row.cells:
-                        for paragraph in cell.paragraphs:
-                            for key, value in replacements.items():
-                                if key in paragraph.text:
-                                    for run in paragraph.runs:
-                                        if key in run.text:
-                                            run.text = run.text.replace(key, value)
+            # Improved replace function
+            def replace_text_in_doc(doc, replacements):
+                # Replace in paragraphs
+                for paragraph in doc.paragraphs:
+                    for key, value in replacements.items():
+                        if key in paragraph.text:
+                            # Handle paragraph-level replacement
+                            inline = paragraph.runs
+                            for run in inline:
+                                if key in run.text:
+                                    run.text = run.text.replace(key, value)
+                
+                # Replace in tables
+                for table in doc.tables:
+                    for row in table.rows:
+                        for cell in row.cells:
+                            for paragraph in cell.paragraphs:
+                                for key, value in replacements.items():
+                                    if key in paragraph.text:
+                                        for run in paragraph.runs:
+                                            if key in run.text:
+                                                run.text = run.text.replace(key, value)
+                
+                return doc
             
-            return doc
-        
-        replacements = {
-            "<<Date>>": letter_date,
-            "<<Addressee>>": addressee if addressee else "",
-            "<<Salutation>>": salutation,
-            "<<Enter text here>>": letter_text
-        }
-        
-        updated_doc = replace_text_in_doc(template, replacements)
-        
-        # Save DOCX
-        docx_buffer = io.BytesIO()
-        updated_doc.save(docx_buffer)
-        docx_buffer.seek(0)
+            replacements = {
+                "<<Date>>": letter_date,
+                "<<Addressee>>": addressee if addressee else "",
+                "<<Salutation>>": salutation,
+                "<<Enter text here>>": letter_text
+            }
+            
+            updated_doc = replace_text_in_doc(template, replacements)
+            
+            # Store in session state
+            st.session_state.processed_doc = updated_doc
+            st.session_state.last_template = template_file.name
         
         st.success("Document processed successfully!")
         
-        st.download_button(
-            label="📥 Download DOCX",
-            data=docx_buffer.getvalue(),
-            file_name=f"{filename}.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
+        # Create download buttons in columns
+        download_col1, download_col2 = st.columns(2)
         
-        st.info("To convert the DOCX file to PDF, please use an external tool or service.")
+        with download_col1:
+            # DOCX Download
+            docx_buffer = io.BytesIO()
+            st.session_state.processed_doc.save(docx_buffer)
+            docx_buffer.seek(0)
+            
+            st.download_button(
+                label="📥 Download as DOCX",
+                data=docx_buffer.getvalue(),
+                file_name=f"{filename}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="docx_download"
+            )
+        
+        with download_col2:
+            # PDF Download instruction
+            st.info("📄 **PDF Download**")
+            st.write("After downloading the DOCX file:")
+            st.write("1. Open it in Microsoft Word")
+            st.write("2. Go to File → Save As")
+            st.write("3. Choose PDF format")
+            st.write("")
+            st.write("Or use an online converter like:")
+            st.markdown("• [SmallPDF](https://smallpdf.com/word-to-pdf)")
+            st.markdown("• [ILovePDF](https://www.ilovepdf.com/word_to_pdf)")
         
     except Exception as e:
         st.error(f"Error processing document: {str(e)}")
@@ -108,3 +204,14 @@ elif not salutation:
     st.info("No salutation found in URL parameters.")
 else:
     st.info("Awaiting letter text and a valid template to begin.")
+
+# Add footer with instructions
+st.markdown("---")
+st.markdown("""
+**How to use this app:**
+1. Download the example template above and customize it with your letterhead
+2. Make sure your template includes the required placeholders
+3. Upload your customized template
+4. The app will automatically fill in the content from the URL parameters
+5. Download your formatted letter as DOCX, then convert to PDF if needed
+""")

@@ -3,64 +3,50 @@ from docx import Document
 from urllib.parse import unquote
 from datetime import date
 import io
-from docx.shared import Inches
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+import requests
+import json
 
 # Configure page to avoid resets
 st.set_page_config(page_title="Letter Formatter", layout="wide")
 
 st.title("📄 Format Your Recommendation Letter")
 
-# Create the example template that matches your actual format
-def create_example_template():
-    doc = Document()
-    
-    # Add header with letterhead info (simplified version of your template)
-    header_p = doc.add_paragraph()
-    header_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    run = header_p.add_run("Your Name, Title, Credentials")
-    run.bold = True
-    
-    doc.add_paragraph("Your Department/Division")
-    doc.add_paragraph("Your Institution Address")
-    doc.add_paragraph("City, State ZIP")
-    doc.add_paragraph("Phone: XXX-XXX-XXXX | Email: your.email@institution.edu")
-    doc.add_paragraph()
-    
-    # Add placeholders - matching your template format
-    doc.add_paragraph("<<Date>>")
-    doc.add_paragraph()
-    doc.add_paragraph("<<Addressee>>")
-    doc.add_paragraph()
-    doc.add_paragraph("<<Salutation>>,")
-    doc.add_paragraph()
-    doc.add_paragraph("<<Enter text here>>")
-    doc.add_paragraph()
-    doc.add_paragraph("Sincerely,")
-    doc.add_paragraph()
-    doc.add_paragraph()
-    doc.add_paragraph("Your Name")
-    doc.add_paragraph("Your Title")
-    
-    return doc
-
 # Get query parameters
 params = st.query_params
 
-# Handle query parameters more safely
+# Handle both URL parameters and letter ID from POST redirect
 letter_text = ""
 addressee = ""
 salutation = ""
 letter_date = date.today().strftime("%B %d, %Y")
 
-if "text" in params:
-    letter_text = unquote(params["text"])
-if "addressee" in params:
-    addressee = unquote(params["addressee"])
-if "salutation" in params:
-    salutation = unquote(params["salutation"])
-if "date" in params:
-    letter_date = unquote(params["date"])
+# Check if we have a letter ID (from POST method)
+if "letter_id" in params:
+    letter_id = params["letter_id"]
+    try:
+        # Fetch the stored letter data
+        # You'll need to implement this endpoint on your API server
+        response = requests.get(f"https://your-api-domain.com/get-letter/{letter_id}")
+        if response.status_code == 200:
+            data = response.json()
+            letter_text = data.get("text", "")
+            addressee = data.get("addressee", "")
+            salutation = data.get("salutation", "")
+            letter_date = data.get("date", letter_date)
+        else:
+            st.error("Could not retrieve letter content. Please try the manual input below.")
+    except Exception as e:
+        st.error(f"Error retrieving letter: {str(e)}. Please use manual input below.")
+else:
+    # Fall back to original URL parameter method
+    if "text" in params:
+        letter_text = unquote(params["text"])
+    if "addressee" in params:
+        addressee = unquote(params["addressee"])
+    if "salutation" in params:
+        salutation = unquote(params["salutation"])
+    if "date" in params:
+        letter_date = unquote(params["date"])
 
 # Create two columns for layout
 col1, col2 = st.columns([2, 1])
@@ -93,19 +79,22 @@ with col2:
     **Note:** If no addressee is provided, the addressee lines will be automatically removed.
     """)
     
-    # Provide example template for download
-    example_doc = create_example_template()
-    example_buffer = io.BytesIO()
-    example_doc.save(example_buffer)
-    example_buffer.seek(0)
-    
-    st.download_button(
-        label="📥 Download Example Template",
-        data=example_buffer.getvalue(),
-        file_name="letter_template_example.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        help="Download this template as a starting point"
-    )
+    # Link to the provided template
+    st.markdown("📥 **[Download Example Template](https://tinyurl.com/yc5au6un)**")
+    st.caption("Use this template as a starting point for your letters")
+
+# Add manual input option
+st.markdown("---")
+st.subheader("🔄 Manual Input Option")
+st.write("If the letter data didn't load automatically, you can input it manually:")
+
+manual_mode = st.checkbox("Use manual input mode")
+
+if manual_mode:
+    letter_text = st.text_area("Letter Text", value=letter_text, height=300)
+    addressee = st.text_input("Addressee (optional)", value=addressee)
+    salutation = st.text_input("Salutation", value=salutation or "Dear admissions committee members,")
+    letter_date = st.text_input("Date", value=letter_date)
 
 # Let user optionally rename file
 filename = st.text_input("Enter filename (without extension)", value="recommendation_letter")
@@ -129,33 +118,47 @@ if template_file and letter_text and salutation:
             # Enhanced replace function that handles addressee removal
             def replace_text_in_doc(doc, replacements, remove_addressee_if_empty=False):
                 paragraphs_to_remove = []
-            
+                
                 # Replace in paragraphs
                 for i, paragraph in enumerate(doc.paragraphs):
-                    full_text = ''.join(run.text for run in paragraph.runs)
+                    paragraph_text = paragraph.text.strip()
+                    
+                    # Handle addressee removal logic
+                    if remove_addressee_if_empty and not addressee:
+                        # If this paragraph contains <<Addressee>> placeholder, mark for removal
+                        if "<<Addressee>>" in paragraph_text:
+                            paragraphs_to_remove.append(i)
+                            continue
+                        # Also remove the blank line after addressee (if it exists)
+                        elif i > 0 and "<<Addressee>>" in doc.paragraphs[i-1].text and paragraph_text == "":
+                            paragraphs_to_remove.append(i)
+                            continue
+                    
+                    # Normal text replacement
                     for key, value in replacements.items():
-                        if key in full_text:
-                            full_text = full_text.replace(key, value)
-                    # Clear existing runs and add new run with replaced text
-                    if full_text != ''.join(run.text for run in paragraph.runs):
-                        for run in paragraph.runs:
-                            run.text = ''
-                        paragraph.runs[0].text = full_text
-            
+                        if key in paragraph.text:
+                            # Handle paragraph-level replacement
+                            for run in paragraph.runs:
+                                if key in run.text:
+                                    run.text = run.text.replace(key, value)
+                
+                # Remove paragraphs marked for removal (in reverse order to maintain indices)
+                for idx in sorted(paragraphs_to_remove, reverse=True):
+                    # Remove paragraph by clearing its content
+                    p = doc.paragraphs[idx]
+                    p.clear()
+                
                 # Replace in tables
                 for table in doc.tables:
                     for row in table.rows:
                         for cell in row.cells:
                             for paragraph in cell.paragraphs:
-                                full_text = ''.join(run.text for run in paragraph.runs)
                                 for key, value in replacements.items():
-                                    if key in full_text:
-                                        full_text = full_text.replace(key, value)
-                                if full_text != ''.join(run.text for run in paragraph.runs):
-                                    for run in paragraph.runs:
-                                        run.text = ''
-                                    paragraph.runs[0].text = full_text
-            
+                                    if key in paragraph.text:
+                                        for run in paragraph.runs:
+                                            if key in run.text:
+                                                run.text = run.text.replace(key, value)
+                
                 return doc
             
             replacements = {
@@ -215,9 +218,9 @@ if template_file and letter_text and salutation:
 elif not template_file:
     st.info("Please upload a Word template to begin.")
 elif not letter_text:
-    st.info("No letter text found in URL parameters.")
+    st.info("No letter text found. Please use manual input above or check your source link.")
 elif not salutation:
-    st.info("No salutation found in URL parameters.")
+    st.info("No salutation found. Please use manual input above.")
 else:
     st.info("Awaiting letter text and a valid template to begin.")
 

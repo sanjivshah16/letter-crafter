@@ -119,12 +119,14 @@ if template_file and letter_text and salutation:
             else:
                 st.warning("⚠️ No placeholders found in template! Make sure your template contains <<Date>>, <<Addressee>>, <<Salutation>>, and <<Enter text here>>")
             
-            # Format-preserving replace function
-            def replace_text_preserve_formatting(doc, replacements):
+            # More robust replace function
+            def replace_text_in_document(doc, replacements):
+                # Keep track of replacements made
                 replacements_made = {}
-                paragraphs_to_remove = []
                 
                 # Process paragraphs
+                paragraphs_to_remove = []
+                
                 for i, paragraph in enumerate(doc.paragraphs):
                     original_text = paragraph.text
                     
@@ -140,39 +142,14 @@ if template_file and letter_text and salutation:
                         paragraphs_to_remove.append(i)
                         continue
                     
-                    # Replace text while preserving formatting
+                    # Replace text in this paragraph
                     for placeholder, replacement in replacements.items():
                         if placeholder in original_text:
-                            # Handle multi-paragraph replacement for long text
-                            if placeholder == "<<Enter text here>>" and "\n\n" in replacement:
-                                # Split replacement text into paragraphs
-                                paragraphs = replacement.split('\n\n')
-                                
-                                # Replace the first paragraph in the existing paragraph
-                                first_paragraph = paragraphs[0]
-                                replace_text_in_paragraph(paragraph, placeholder, first_paragraph)
-                                replacements_made[placeholder] = True
-                                
-                                # Add additional paragraphs after this one
-                                if len(paragraphs) > 1:
-                                    # Get the paragraph's style for consistency
-                                    style = paragraph.style
-                                    
-                                    # Insert new paragraphs after the current one
-                                    parent = paragraph._element.getparent()
-                                    current_p = paragraph._element
-                                    
-                                    for extra_text in paragraphs[1:]:
-                                        # Create new paragraph with same style
-                                        new_p = doc.add_paragraph(extra_text, style)
-                                        # Move it to the correct position
-                                        parent.insert(parent.index(current_p) + 1, new_p._element)
-                                        current_p = new_p._element
-                            else:
-                                # Simple single replacement
-                                replace_text_in_paragraph(paragraph, placeholder, replacement)
-                                replacements_made[placeholder] = True
-                            break
+                            # Clear the paragraph and add the new text
+                            paragraph.clear()
+                            paragraph.add_run(original_text.replace(placeholder, replacement))
+                            replacements_made[placeholder] = True
+                            break  # Only do one replacement per paragraph
                 
                 # Remove paragraphs marked for removal (in reverse order)
                 for idx in sorted(paragraphs_to_remove, reverse=True):
@@ -185,51 +162,14 @@ if template_file and letter_text and salutation:
                     for row in table.rows:
                         for cell in row.cells:
                             for paragraph in cell.paragraphs:
+                                original_text = paragraph.text
                                 for placeholder, replacement in replacements.items():
-                                    if placeholder in paragraph.text:
-                                        replace_text_in_paragraph(paragraph, placeholder, replacement)
+                                    if placeholder in original_text:
+                                        paragraph.clear()
+                                        paragraph.add_run(original_text.replace(placeholder, replacement))
                                         replacements_made[placeholder] = True
                 
                 return doc, replacements_made
-            
-            def replace_text_in_paragraph(paragraph, placeholder, replacement):
-                """Replace text in a paragraph while preserving formatting of the first run that contains the placeholder"""
-                
-                # Find the run that contains the placeholder
-                target_run = None
-                for run in paragraph.runs:
-                    if placeholder in run.text:
-                        target_run = run
-                        break
-                
-                if target_run is None:
-                    return
-                
-                # Store the formatting from the target run
-                font = target_run.font
-                font_name = font.name
-                font_size = font.size
-                font_bold = font.bold
-                font_italic = font.italic
-                font_underline = font.underline
-                font_color = font.color.rgb if font.color.rgb else None
-                
-                # Clear all runs in the paragraph
-                for run in paragraph.runs:
-                    run.clear()
-                
-                # Add new run with the replacement text and preserved formatting
-                new_run = paragraph.runs[0]
-                new_run.text = paragraph.text.replace(placeholder, replacement)
-                
-                # Apply the preserved formatting
-                new_run.font.name = font_name
-                new_run.font.size = font_size
-                new_run.font.bold = font_bold
-                new_run.font.italic = font_italic
-                new_run.font.underline = font_underline
-                if font_color:
-                    new_run.font.color.rgb = font_color
             
             # Define replacements
             replacements = {
@@ -240,7 +180,7 @@ if template_file and letter_text and salutation:
             }
             
             # Apply replacements
-            updated_doc, replacements_made = replace_text_preserve_formatting(template, replacements)
+            updated_doc, replacements_made = replace_text_in_document(template, replacements)
             
             # Show what replacements were made
             st.write("**Replacements made:**")
@@ -298,6 +238,4 @@ st.markdown("""
 4. The app will automatically fill in the content from the URL parameters or pastebin
 5. If no addressee is provided, those lines will be automatically removed
 6. Download your formatted letter as a DOCX file
-
-**✨ Font matching:** The replacement text will automatically match the font, size, and formatting of your template placeholders!
 """)

@@ -11,7 +11,7 @@ import fitz
 
 # --- Page config ---
 st.set_page_config(page_title="Letter Crafter (Public)", layout="wide")
-st.title("\ud83d\udcc4 Letter Crafter")
+st.title("📄 Letter Crafter")
 
 # --- Password protection ---
 def verify_password(pw: str) -> bool:
@@ -74,11 +74,11 @@ def prepare_file_context(files):
     return "\n".join(previews)
 
 # --- Inputs ---
-st.subheader("\ud83d\udcc1 Upload Materials")
+st.subheader("📁 Upload Materials")
 uploaded_files = st.file_uploader("Upload CVs, drafts, personal statements, etc.", accept_multiple_files=True)
 
-st.subheader("\ud83d\udc65 Describe Your Relationship")
-relationship_text = st.text_area("How do you know the applicant? (1–4 sentences)", height=120)
+st.subheader("👥 Describe Your Relationship")
+relationship_text = st.text_area("How do you know the applicant? (1–2 sentences)", height=120)
 
 addressee = st.text_input("Addressee (e.g., Admissions Committee)", "")
 salutation = st.text_input("Salutation (e.g., Dear Committee)", "")
@@ -92,11 +92,11 @@ font_name = st.selectbox("Font", ["Arial", "Times New Roman", "Calibri", "Aptos"
 font_size = st.selectbox("Font size", [9, 10, 10.5, 11, 11.5, 12], index=3)
 
 # --- Template Upload ---
-st.subheader("\ud83d\udcc4 Upload Your Own Word Template")
+"Or [Download a Sample Template](https://www.dropbox.com/scl/fi/on6f93fpzzqy3zbug595y/LOR_template.docx?rlkey=lyyufxhkfgd0zb0ayvtxrihxu&dl=1)",
 template_file = st.file_uploader("Upload a .docx template with placeholders", type=["docx"])
 
 st.markdown(
-    "\ud83d\udcc5 Or [Download a Sample Template](https://www.dropbox.com/scl/fi/on6f93fpzzqy3zbug595y/LOR_template.docx?rlkey=lyyufxhkfgd0zb0ayvtxrihxu&dl=1)",
+    "Or [Download a Sample Template](https://www.dropbox.com/scl/fi/on6f93fpzzqy3zbug595y/LOR_template.docx?rlkey=lyyufxhkfgd0zb0ayvtxrihxu&dl=1)",
     unsafe_allow_html=True
 )
 
@@ -132,7 +132,7 @@ def generate_letter(relationship_text, files):
         return None
 
 # --- Generate button ---
-if st.button("\u270d\ufe0f Generate Letter"):
+if st.button("✍️ Generate Letter"):
     if not uploaded_files or not relationship_text.strip():
         st.warning("Please upload at least one file and describe your relationship.")
         st.stop()

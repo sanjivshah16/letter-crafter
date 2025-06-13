@@ -148,7 +148,7 @@ if st.button("✍️ Generate Letter"):
         st.session_state.salutation = salutation
         st.session_state.date = letter_date
         st.session_state.template_file = template_file
-        st.success("\u2705 Letter body generated.")
+        st.success("Letter body generated.")
 
 # --- Template insertion ---
 def replace_placeholders(doc, replacements):
@@ -196,7 +196,7 @@ if "letter_text" in st.session_state:
         buffer.seek(0)
 
         st.download_button(
-            label="\ud83d\udcc5 Download Letter (DOCX)",
+            label="Download Letter (DOCX)",
             data=buffer,
             file_name=f"{filename}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"

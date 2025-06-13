@@ -8,6 +8,20 @@ from docx.shared import Pt
 from docx.oxml.ns import qn
 import pandas as pd
 import fitz  
+from twilio.rest import Client
+
+def notify_usage():
+    try:
+        twilio_sid = st.secrets["twilio"]["account_sid"]
+        twilio_token = st.secrets["twilio"]["auth_token"]
+        client = Client(twilio_sid, twilio_token)
+        client.messages.create(
+            body="📄 Letter Crafter was just used to generate a new letter.",
+            from_=st.secrets["twilio"]["from_number"],
+            to=st.secrets["twilio"]["to_number"]
+        )
+    except Exception as e:
+        st.warning(f"(SMS failed: {e})")
 
 # --- Page config ---
 st.set_page_config(page_title="Letter Crafter (Public)", layout="wide")
@@ -148,6 +162,7 @@ if st.button("✍️ Generate Letter"):
         st.session_state.salutation = salutation
         st.session_state.date = letter_date
         st.session_state.template_file = template_file
+        notify_usage()
         st.success("Letter body generated.")
 
 # --- Template insertion ---

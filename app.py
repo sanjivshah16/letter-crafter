@@ -55,7 +55,11 @@ font_size = st.selectbox("Font size", [9, 10, 10.5, 11, 11.5, 12], index=3)
 st.subheader("📄 Upload Your Own Word Template")
 template_file = st.file_uploader("Upload a .docx template with placeholders", type=["docx"])
 
-st.markdown("📥 Or [Download a Sample Template](LOR_template.docx)", unsafe_allow_html=True)
+st.markdown(
+    "📥 Or [Download a Sample Template](https://www.dropbox.com/scl/fi/on6f93fpzzqy3zbug595y/LOR_template.docx?rlkey=lyyufxhkfgd0zb0ayvtxrihxu&dl=1)",
+    unsafe_allow_html=True
+)
+
 
 # --- File base64 preview ---
 def prepare_file_context(files):

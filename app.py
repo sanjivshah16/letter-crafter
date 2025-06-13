@@ -7,8 +7,7 @@ from docx import Document
 from docx.shared import Pt
 from docx.oxml.ns import qn
 import pandas as pd
-from pymupdf4llm import PDFExtractor
-import fitz  # Required by pymupdf4llm
+import fitz  
 
 # --- Page config ---
 st.set_page_config(page_title="Letter Crafter (Public)", layout="wide")
@@ -35,8 +34,12 @@ client = OpenAI(api_key=st.secrets["openai_api_key"])
 
 # --- File extractors ---
 def extract_text_from_pdf(file):
-    extractor = PDFExtractor(file)
-    return extractor.get_text()
+    try:
+        doc = fitz.open(stream=file.read(), filetype="pdf")
+        return "\n".join([page.get_text() for page in doc])
+    except Exception as e:
+        return f"(Failed to extract text from PDF: {e})"
+
 
 def extract_text_from_docx(file):
     doc = Document(file)

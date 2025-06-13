@@ -1,238 +1,177 @@
 import streamlit as st
-from docx import Document
-from urllib.parse import unquote
+import hashlib
+import base64
 from datetime import date
+import io
+import os
+from openai import OpenAI
+from docx import Document
 from docx.shared import Pt
 from docx.oxml.ns import qn
-import io
-import requests
-import json
+from docx.oxml import OxmlElement
 
-# Configure page to avoid resets
-st.set_page_config(page_title="Letter Formatter", layout="wide")
+# --- Page config ---
+st.set_page_config(page_title="Letter Crafter (Public)", layout="wide")
+st.title("📄 Letter Crafter")
 
-st.title("📄 Format Your Recommendation Letter")
+# --- Password protection ---
+def verify_password(pw: str) -> bool:
+    return hashlib.sha256(pw.encode()).hexdigest() == st.secrets.get("password_hash", "")
 
-# Get query parameters
-params = st.query_params
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
 
-# Handle both URL parameters and pastebin ID
-letter_text = ""
-addressee = ""
-salutation = ""
+if not st.session_state.authenticated:
+    pw = st.text_input("Enter password", type="password")
+    if pw and verify_password(pw):
+        st.session_state.authenticated = True
+        st.rerun()
+    elif pw:
+        st.error("Incorrect password.")
+    st.stop()
+
+# --- OpenAI client ---
+client = OpenAI(api_key=st.secrets["openai_api_key"])
+
+# --- Inputs ---
+st.subheader("📁 Upload Materials")
+uploaded_files = st.file_uploader("Upload CVs, drafts, personal statements, etc.", accept_multiple_files=True)
+
+st.subheader("👥 Describe Your Relationship")
+relationship_text = st.text_area("How do you know the applicant? (1–4 sentences)", height=120)
+
+addressee = st.text_input("Addressee (e.g., Admissions Committee)", "")
+salutation = st.text_input("Salutation (e.g., Dear Committee)", "")
+if not salutation.strip():
+    salutation = "To Whom It May Concern"
+
 letter_date = date.today().strftime("%B %d, %Y")
+filename = st.text_input("Output filename (no extension)", value="recommendation_letter")
 
-# Check if we have a pastebin ID
-if "paste_id" in params:
-    paste_id = params["paste_id"]
-    try:
-        pastebin_url = f"https://pastebin.com/raw/{paste_id}"
-        response = requests.get(pastebin_url)
-        if response.status_code == 200:
-            data = json.loads(response.text)
-            letter_text = data.get("text", "")
-            addressee = data.get("addressee", "")
-            salutation = data.get("salutation", "")
-            letter_date = data.get("date", letter_date)
-            st.success("✅ Letter data loaded successfully from pastebin!")
-        else:
-            st.error("Could not retrieve letter content from pastebin.")
-    except Exception as e:
-        st.error(f"Error retrieving letter: {str(e)}")
-
-# Override with individual parameters
-if "addressee" in params:
-    addressee = unquote(params["addressee"])
-if "salutation" in params:
-    salutation = unquote(params["salutation"])
-if "date" in params:
-    letter_date = unquote(params["date"])
-if "text" in params:
-    letter_text = unquote(params["text"])
-
-# Layout
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    st.subheader("Parsed Content:")
-    st.write(f"**Date:** {letter_date}")
-    st.write(f"**Addressee:** {addressee if addressee else '(None provided)'}")
-    st.write(f"**Salutation:** {salutation}")
-    st.write(f"**Letter Text Length:** {len(letter_text)} characters")
-    if letter_text:
-        with st.expander("Preview Letter Text"):
-            st.write(letter_text)
-
-with col2:
-    st.subheader("📋 Template Requirements")
-    st.info("""
-    **Important:** Your Word template must:
-    - Be a .docx file
-    - Include these placeholders:
-      - `<<Date>>`  
-      - `<<Addressee>>`  
-      - `<<Salutation>>`  
-      - `<<Enter text here>>`
-    """)
-    st.markdown("📥 **[Download Example Template](https://www.dropbox.com/scl/fi/on6f93fpzzqy3zbug595y/LOR_template.docx?rlkey=lyyufxhkfgd0zb0ayvtxrihxu&dl=0)**")
-    st.caption("Use this template as a starting point.")
-
-# Filename input
-filename = st.text_input("Enter filename (without extension)", value="recommendation_letter")
-
-# Font & size selection
-st.markdown("### ✏️ Choose Formatting")
 font_name = st.selectbox("Font", ["Arial", "Times New Roman", "Calibri", "Aptos"], index=0)
 font_size = st.selectbox("Font size", [9, 10, 10.5, 11, 11.5, 12], index=3)
 
-# Check if font settings have changed after document was processed
-font_changed = False
-if 'processed_doc' in st.session_state:
-    if ('last_font_name' in st.session_state and st.session_state.last_font_name != font_name) or \
-       ('last_font_size' in st.session_state and st.session_state.last_font_size != font_size):
-        font_changed = True
+# --- Template Upload ---
+st.subheader("📄 Upload Your Own Word Template")
+template_file = st.file_uploader("Upload a .docx template with placeholders", type=["docx"])
 
-# Template upload
-template_file = st.file_uploader(
-    "Upload Your Word Template (.docx)", 
-    type=["docx"],
-    help="Upload a Word document with the required placeholders"
-)
+st.markdown("📥 Or [Download a Sample Template](LOR_template.docx)", unsafe_allow_html=True)
 
-# Show regenerate button if font changed and document exists
-if font_changed and template_file:
-    if st.button("🔄 Regenerate Letter with Updated Font Formatting", type="primary"):
-        # Clear the cached document to force regeneration
-        if 'processed_doc' in st.session_state:
-            del st.session_state.processed_doc
-        if 'cache_key' in st.session_state:
-            del st.session_state.cache_key
-        st.rerun()
+# --- File base64 preview ---
+def prepare_file_context(files):
+    previews = []
+    for f in files:
+        content = f.read()
+        encoded = base64.b64encode(content).decode("utf-8")
+        preview = encoded[:500]  # limit to reduce token usage
+        previews.append(f"{f.name} (base64 preview):\n{preview}...\n")
+    return "\n".join(previews)
 
-# Main processing
-if template_file and letter_text and salutation:
+# --- Generate letter with GPT-4o ---
+def generate_letter(relationship_text, files):
+    system_prompt = (
+        "You are Letter Crafter, an expert letter writer. You will receive a description of the recommender's "
+        "relationship with the applicant and base64 previews of attached files (e.g., CVs, drafts, etc). "
+        "Use this information to write the body of a polished recommendation letter. "
+        "Do NOT include the date, salutation, or closing. Return only the letter body."
+    )
+
+    file_context = prepare_file_context(files)
+    user_prompt = (
+        f"My relationship to the applicant:\n{relationship_text}\n\n"
+        f"Attached files:\n{file_context}\n\n"
+        f"Please write a professional recommendation letter body only."
+    )
+
     try:
-        cache_key = f"{template_file.name}_{hash(letter_text)}_{hash(addressee)}_{hash(salutation)}_{font_name}_{font_size}"
-        
-        if 'processed_doc' not in st.session_state or st.session_state.get('cache_key') != cache_key:
-            template = Document(template_file)
-            
-            placeholders_found = []
-            for paragraph in template.paragraphs:
-                if "<<" in paragraph.text and ">>" in paragraph.text:
-                    placeholders_found.append(paragraph.text.strip())
-            if placeholders_found:
-                st.write("**Placeholders found in template:**")
-                for placeholder in placeholders_found:
-                    st.write(f"- {placeholder}")
-            else:
-                st.warning("⚠️ No placeholders found in template!")
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=1000
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        st.error(f"Error generating letter: {e}")
+        return None
 
-            # Replacement logic
-            def replace_text_in_document(doc, replacements):
-                replacements_made = {}
-                paragraphs_to_remove = []
-                letter_content_paragraph_index = None
+# --- Generate button ---
+if st.button("✍️ Generate Letter"):
+    if not uploaded_files or not relationship_text.strip():
+        st.warning("Please upload at least one file and describe your relationship.")
+        st.stop()
 
-                for i, paragraph in enumerate(doc.paragraphs):
-                    original_text = paragraph.text
+    if not template_file:
+        st.warning("Please upload a Word template.")
+        st.stop()
 
-                    if not addressee and "<<Addressee>>" in original_text:
-                        paragraphs_to_remove.append(i)
-                        continue
-                    if not addressee and i > 0 and "<<Addressee>>" in doc.paragraphs[i-1].text and original_text.strip() == "":
-                        paragraphs_to_remove.append(i)
-                        continue
+    letter_body = generate_letter(relationship_text, uploaded_files)
+    if letter_body:
+        st.session_state.letter_text = letter_body
+        st.session_state.addressee = addressee
+        st.session_state.salutation = salutation
+        st.session_state.date = letter_date
+        st.session_state.template_file = template_file
+        st.success("✅ Letter body generated.")
 
-                    for placeholder, replacement in replacements.items():
-                        if placeholder in original_text:
-                            paragraph.clear()
-                            run = paragraph.add_run(original_text.replace(placeholder, replacement))
-                            run.font.name = font_name
-                            run.font.size = Pt(font_size)
-                            run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
-                            replacements_made[placeholder] = True
-                            
-                            # Track where the letter content was inserted
-                            if placeholder == "<<Enter text here>>":
-                                letter_content_paragraph_index = i
-                            break
+# --- Template insertion ---
+def replace_placeholders(doc, replacements):
+    date_idx = None
 
-                # Apply font formatting to all paragraphs after the letter content
-                if letter_content_paragraph_index is not None:
-                    for i in range(letter_content_paragraph_index + 1, len(doc.paragraphs)):
-                        paragraph = doc.paragraphs[i]
-                        # Only format paragraphs that have text content
-                        if paragraph.text.strip():
-                            for run in paragraph.runs:
-                                run.font.name = font_name
-                                run.font.size = Pt(font_size)
-                                run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
+    for idx, p in enumerate(doc.paragraphs):
+        for placeholder, replacement in replacements.items():
+            if placeholder in p.text:
+                p.clear()
+                run = p.add_run(replacement)
+                run.font.name = font_name
+                run.font.size = Pt(font_size)
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
 
-                for idx in sorted(paragraphs_to_remove, reverse=True):
-                    p = doc.paragraphs[idx]
-                    p_element = p._element
-                    p_element.getparent().remove(p_element)
+                if placeholder == "<<Date>>":
+                    date_idx = idx
 
-                return doc, replacements_made
+    # Only clean spacing after <<Date>>, keeping one blank
+    if date_idx is not None:
+        empties = []
+        i = date_idx + 1
+        while i < len(doc.paragraphs):
+            para = doc.paragraphs[i]
+            if para.text.strip():
+                break
+            empties.append(para)
+            i += 1
+        for p in empties[1:]:
+            try:
+                p._element.getparent().remove(p._element)
+            except Exception:
+                pass
 
-            replacements = {
-                "<<Date>>": letter_date,
-                "<<Addressee>>": addressee if addressee else "",
-                "<<Salutation>>": salutation,
-                "<<Enter text here>>": letter_text
-            }
+# --- Format & download letter ---
+if "letter_text" in st.session_state:
+    try:
+        doc = Document(st.session_state.template_file)
 
-            updated_doc, replacements_made = replace_text_in_document(template, replacements)
+        replacements = {
+            "<<Date>>": st.session_state.date,
+            "<<Addressee>>": st.session_state.addressee,
+            "<<Salutation>>": st.session_state.salutation,
+            "<<Enter text here>>": st.session_state.letter_text
+        }
 
-            st.write("**Replacements made:**")
-            for placeholder, replacement in replacements.items():
-                if placeholder in replacements_made:
-                    st.write(f"✅ {placeholder} → {replacement[:50]}{'...' if len(replacement) > 50 else ''}")
-                else:
-                    st.write(f"❌ {placeholder} (not found in template)")
+        replace_placeholders(doc, replacements)
 
-            st.session_state.processed_doc = updated_doc
-            st.session_state.cache_key = cache_key
-            # Store current font settings
-            st.session_state.last_font_name = font_name
-            st.session_state.last_font_size = font_size
-
-        st.success("🎉 Document processed successfully!")
-        docx_buffer = io.BytesIO()
-        st.session_state.processed_doc.save(docx_buffer)
-        docx_buffer.seek(0)
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
 
         st.download_button(
-            label="📥 Download Formatted Letter (DOCX)",
-            data=docx_buffer.getvalue(),
+            label="📥 Download Letter (DOCX)",
+            data=buffer,
             file_name=f"{filename}.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            key="docx_download"
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
-
     except Exception as e:
-        st.error(f"❌ Error processing document: {str(e)}")
-        st.write("**Debug info:**")
-        st.write(f"Template file name: {template_file.name}")
-        st.write(f"Letter text length: {len(letter_text)}")
-        if letter_text:
-            st.write(f"Letter text preview: {letter_text[:100]}...")
-elif not template_file:
-    st.info("📤 Please upload a Word template to begin.")
-elif not letter_text:
-    st.info("📝 No letter text found. Please check your source link.")
-elif not salutation:
-    st.info("👋 No salutation found. Please check your source link.")
-else:
-    st.info("⏳ Awaiting letter text and a valid template to begin.")
-
-st.markdown("---")
-st.markdown("""
-**📋 How to use this app:**
-1. Download the example template above and customize it with your letterhead  
-2. Make sure your template includes: `<<Date>>`, `<<Addressee>>`, `<<Salutation>>`, `<<Enter text here>>`  
-3. Upload your customized template  
-4. Choose your desired font and size  
-5. The app fills in the content and lets you download the final DOCX
-""")
+        st.error(f"Error formatting letter: {e}")

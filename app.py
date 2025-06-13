@@ -1,18 +1,18 @@
 import streamlit as st
 import hashlib
-import base64
 from datetime import date
 import io
-import os
 from openai import OpenAI
 from docx import Document
 from docx.shared import Pt
 from docx.oxml.ns import qn
-from docx.oxml import OxmlElement
+import pandas as pd
+from pymupdf4llm import PDFExtractor
+import fitz  # Required by pymupdf4llm
 
 # --- Page config ---
 st.set_page_config(page_title="Letter Crafter (Public)", layout="wide")
-st.title("📄 Letter Crafter")
+st.title("\ud83d\udcc4 Letter Crafter")
 
 # --- Password protection ---
 def verify_password(pw: str) -> bool:
@@ -33,11 +33,48 @@ if not st.session_state.authenticated:
 # --- OpenAI client ---
 client = OpenAI(api_key=st.secrets["openai_api_key"])
 
+# --- File extractors ---
+def extract_text_from_pdf(file):
+    extractor = PDFExtractor(file)
+    return extractor.get_text()
+
+def extract_text_from_docx(file):
+    doc = Document(file)
+    return "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+
+def extract_text_from_xlsx(file):
+    dfs = pd.read_excel(file, sheet_name=None)
+    output = []
+    for name, df in dfs.items():
+        output.append(f"Sheet: {name}\n")
+        output.append(df.head(20).to_string(index=False))
+        output.append("\n")
+    return "\n".join(output)
+
+def prepare_file_context(files):
+    previews = []
+    for f in files:
+        filename = f.name
+        try:
+            if filename.endswith(".pdf"):
+                text = extract_text_from_pdf(f)
+            elif filename.endswith(".docx"):
+                text = extract_text_from_docx(f)
+            elif filename.endswith(".xlsx"):
+                text = extract_text_from_xlsx(f)
+            else:
+                text = f.read().decode(errors="ignore")
+            preview = text[:2000]
+            previews.append(f"{filename}:\n{preview}\n")
+        except Exception as e:
+            previews.append(f"{filename}: (Could not extract text: {e})")
+    return "\n".join(previews)
+
 # --- Inputs ---
-st.subheader("📁 Upload Materials")
+st.subheader("\ud83d\udcc1 Upload Materials")
 uploaded_files = st.file_uploader("Upload CVs, drafts, personal statements, etc.", accept_multiple_files=True)
 
-st.subheader("👥 Describe Your Relationship")
+st.subheader("\ud83d\udc65 Describe Your Relationship")
 relationship_text = st.text_area("How do you know the applicant? (1–4 sentences)", height=120)
 
 addressee = st.text_input("Addressee (e.g., Admissions Committee)", "")
@@ -52,30 +89,19 @@ font_name = st.selectbox("Font", ["Arial", "Times New Roman", "Calibri", "Aptos"
 font_size = st.selectbox("Font size", [9, 10, 10.5, 11, 11.5, 12], index=3)
 
 # --- Template Upload ---
-st.subheader("📄 Upload Your Own Word Template")
+st.subheader("\ud83d\udcc4 Upload Your Own Word Template")
 template_file = st.file_uploader("Upload a .docx template with placeholders", type=["docx"])
 
 st.markdown(
-    "📥 Or [Download a Sample Template](https://www.dropbox.com/scl/fi/on6f93fpzzqy3zbug595y/LOR_template.docx?rlkey=lyyufxhkfgd0zb0ayvtxrihxu&dl=1)",
+    "\ud83d\udcc5 Or [Download a Sample Template](https://www.dropbox.com/scl/fi/on6f93fpzzqy3zbug595y/LOR_template.docx?rlkey=lyyufxhkfgd0zb0ayvtxrihxu&dl=1)",
     unsafe_allow_html=True
 )
-
-
-# --- File base64 preview ---
-def prepare_file_context(files):
-    previews = []
-    for f in files:
-        content = f.read()
-        encoded = base64.b64encode(content).decode("utf-8")
-        preview = encoded[:500]  # limit to reduce token usage
-        previews.append(f"{f.name} (base64 preview):\n{preview}...\n")
-    return "\n".join(previews)
 
 # --- Generate letter with GPT-4o ---
 def generate_letter(relationship_text, files):
     system_prompt = (
         "You are Letter Crafter, an expert letter writer. You will receive a description of the recommender's "
-        "relationship with the applicant and base64 previews of attached files (e.g., CVs, drafts, etc). "
+        "relationship with the applicant and readable text previews of attached files (e.g., CVs, drafts, etc). "
         "Use this information to write the body of a polished recommendation letter. "
         "Do NOT include the date, salutation, or closing. Return only the letter body."
     )
@@ -103,7 +129,7 @@ def generate_letter(relationship_text, files):
         return None
 
 # --- Generate button ---
-if st.button("✍️ Generate Letter"):
+if st.button("\u270d\ufe0f Generate Letter"):
     if not uploaded_files or not relationship_text.strip():
         st.warning("Please upload at least one file and describe your relationship.")
         st.stop()
@@ -119,12 +145,11 @@ if st.button("✍️ Generate Letter"):
         st.session_state.salutation = salutation
         st.session_state.date = letter_date
         st.session_state.template_file = template_file
-        st.success("✅ Letter body generated.")
+        st.success("\u2705 Letter body generated.")
 
 # --- Template insertion ---
 def replace_placeholders(doc, replacements):
     date_idx = None
-
     for idx, p in enumerate(doc.paragraphs):
         for placeholder, replacement in replacements.items():
             if placeholder in p.text:
@@ -133,11 +158,9 @@ def replace_placeholders(doc, replacements):
                 run.font.name = font_name
                 run.font.size = Pt(font_size)
                 run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
-
                 if placeholder == "<<Date>>":
                     date_idx = idx
 
-    # Only clean spacing after <<Date>>, keeping one blank
     if date_idx is not None:
         empties = []
         i = date_idx + 1
@@ -157,14 +180,12 @@ def replace_placeholders(doc, replacements):
 if "letter_text" in st.session_state:
     try:
         doc = Document(st.session_state.template_file)
-
         replacements = {
             "<<Date>>": st.session_state.date,
             "<<Addressee>>": st.session_state.addressee,
             "<<Salutation>>": st.session_state.salutation,
             "<<Enter text here>>": st.session_state.letter_text
         }
-
         replace_placeholders(doc, replacements)
 
         buffer = io.BytesIO()
@@ -172,7 +193,7 @@ if "letter_text" in st.session_state:
         buffer.seek(0)
 
         st.download_button(
-            label="📥 Download Letter (DOCX)",
+            label="\ud83d\udcc5 Download Letter (DOCX)",
             data=buffer,
             file_name=f"{filename}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
